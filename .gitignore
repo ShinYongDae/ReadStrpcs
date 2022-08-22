@@ -1,0 +1,14 @@
+Debug/
+ipch/
+x64/
+ReadStrpcs/Debug/
+.vs/
+
+ReadStrpcs.sdf
+ReadStrpcs.VC.db
+ReadStrpcs/ReadStrpcs.aps
+
+
+
+
+
