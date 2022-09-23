@@ -270,19 +270,23 @@ CString sName[25] =
 
 BOOL CReadStrpcsDlg::LoadStrpcsFromCam(CString& sPath, CString& sData)
 {
+	m_nCol = 0;
+	m_nRow = 0;
+
 	CString str = _T("");
 	sData = _T("");
 	int nN = 0;
+	int nTemp = 0;
 
-	short FrameRgnNum;
-	int PieceRgnNum;
+	//short FrameRgnNum;
+	//int PieceRgnNum;
 	int nCornerNum;
 	int nDummy[MAX_PATH];
-	int nPieceNum[MAX_PATH];
+	//int nPieceNum[MAX_PATH];
 
 	REGIONS_FRAME FrameRgnPix[MAX_FRAME_RGN_NUM];
-	REGIONS_FRAME_ID FrameRgnID[MAX_FRAME_RGN_NUM];
-	REGIONS_PIECE_2 PieceRgnPix[MAX_PIECE_RGN_NUM];
+	//REGIONS_FRAME_ID FrameRgnID[MAX_FRAME_RGN_NUM];
+	//REGIONS_PIECE_2 PieceRgnPix[MAX_PIECE_RGN_NUM];
 
 	//TCHAR		FileNCam[1024];
 	CString		strFileNCam;
@@ -402,6 +406,7 @@ BOOL CReadStrpcsDlg::LoadStrpcsFromCam(CString& sPath, CString& sData)
 	int Size = 0;
 	int nPieceRgnNum = 0;
 
+	int nMaxR = 0, nMaxC = 0;
 	//double mmPxl = MasterInfo.dPixelSize / 1000.0; // [mm]
 	//end for previous pcs info.
 
@@ -486,7 +491,10 @@ BOOL CReadStrpcsDlg::LoadStrpcsFromCam(CString& sPath, CString& sData)
 			file.Read((void *)&PieceRgnPix[i + PieceCount].nId, sizeof(int));	// Piece ID
 			file.Read((void *)&PieceRgnPix[i + PieceCount].Row, sizeof(int));	// Row
 			file.Read((void *)&PieceRgnPix[i + PieceCount].Col, sizeof(int));	// Col
-			file.Read((void *)&nDummy[6 + i + PieceCount], sizeof(int));		// Rotation Info (0 : 0  1 : 90  2 : 180  3 : 270 [Degree])
+			//file.Read((void *)&nDummy[6 + i + PieceCount], sizeof(int));		// Rotation Info (0 : 0  1 : 90  2 : 180  3 : 270 [Degree])
+			file.Read((void *)&nTemp, sizeof(int));
+
+			PieceRgnPix[i + PieceCount].nId += PieceCount;					// Piece ID : Panel 별로 (0 ~ 시작)
 
 			str.Format(_T("%d-%s: %d"), i, sName[nN + 11], PieceRgnPix[i + PieceCount].nId);
 			sData += str;
@@ -504,6 +512,11 @@ BOOL CReadStrpcsDlg::LoadStrpcsFromCam(CString& sPath, CString& sData)
 			sData += str;
 			sData += _T("\r\n");
 
+			if (nMaxC < PieceRgnPix[i + PieceCount].Col)
+				nMaxC = PieceRgnPix[i + PieceCount].Col;
+
+			if (nMaxR < PieceRgnPix[i + PieceCount].Row)
+				nMaxR = PieceRgnPix[i + PieceCount].Row;
 			////////////////////////////////////////////////////////////////////////////////////////////////
 			// Set Piece position
 			Dummy = sizeof(CPoint);
@@ -609,6 +622,10 @@ BOOL CReadStrpcsDlg::LoadStrpcsFromCam(CString& sPath, CString& sData)
 	file.Close();
 
 	FreePolygonRgnData(PolygonPoints);
+
+	m_nRow = nMaxR * FrameRgnNum;
+	m_nCol = nMaxC;
+
 	return TRUE;
 }
 
@@ -622,7 +639,351 @@ void CReadStrpcsDlg::OnBnClickedButton1()
 	GetDlgItem(IDC_STATIC_PATH)->SetWindowText(sPath);
 
 	CString sData = _T("");
+	CFileFind	find;
+	//sPath = _T("\\\\GM-STORAGE2\\MasterData-PCB\\C1iNRefer\\TOP\\1TS_TEST-025\\strpcs.bin");
+	sPath = _T("\\\\gm-storage2\\MasterData-PCB\\C1INRefer\\BTM\\1BS-TEST-025\\strpcs.bin");
+	if (!find.FindFile(sPath))
+	{
+		AfxMessageBox(_T("캠마스터에 피스정보가 설정되지 않았습니다."));
+		return;
+	}
+
 	if (!LoadStrpcsFromCam(sPath, sData))
 		AfxMessageBox(_T("LoadStripRgnFromCam failed!"));
 	GetDlgItem(IDC_EDIT1)->SetWindowText(sData);
+
+	SetMasterPanelInfo();
+	InitOrederingMk();
+	GetDlgItem(IDC_EDIT2)->SetWindowText(WriteOrederingMk());
+}
+
+void CReadStrpcsDlg::SetShotRowCol(int nR, int nC)
+{
+	m_nRow = nR;
+	m_nCol = nC;
+}
+
+
+void CReadStrpcsDlg::GetShotRowCol(int& nR, int& nC)
+{
+	nR = m_nRow;
+	nC = m_nCol;
+}
+
+int CReadStrpcsDlg::GetTotPcs()
+{
+	return PieceRgnNum;
+}
+
+void CReadStrpcsDlg::SetMasterPanelInfo()
+{
+	//if (!m_pPcsRgn)
+	//	return;
+
+	int i, j, k;
+	int nR, nC, nRow, nCol, nSMaxR, nSMaxC, nPMaxR, nPMaxC;
+	int nPieceCount = 0;
+	int nMstPcsIdx = -1;
+
+	//double mmPxl = MasterInfo.dPixelSize / 1000.0; // [mm]
+
+	MstPnl.nTotalStrip = FrameRgnNum;
+	MstPnl.nTotalPiece = PieceRgnNum;
+	//MstPnl.nPcsCorner = m_nCornerNum;
+	//MstPnl.nTotalAlignPos = MasterInfo.nNumOfAlignPoint;
+
+	//CRect rt = m_pPcsRgn->GetShotRgn();
+	//MstPnl.Area.dLeft = rt.left;		// [mm]
+	//MstPnl.Area.dTop = rt.top;		// [mm]
+	//MstPnl.Area.dRight = rt.right;	// [mm]
+	//MstPnl.Area.dBottom = rt.bottom;	// [mm]
+										//MstPnl.Area.dLeft = m_pPcsRgn->rtFrm.left;		// [mm]
+										//MstPnl.Area.dTop = m_pPcsRgn->rtFrm.top;		// [mm]
+										//MstPnl.Area.dRight = m_pPcsRgn->rtFrm.right;	// [mm]
+										//MstPnl.Area.dBottom = m_pPcsRgn->rtFrm.bottom;	// [mm]
+
+	nSMaxR = 0; nSMaxC = 0;
+	for (j = 0; j < FrameRgnNum; j++)
+	{
+		nRow = FrameRgnID[j].Row - 1; // Cammaster Row, Col : (1, 1) 부터시작
+		nCol = FrameRgnID[j].Col - 1; // Cammaster Row, Col : (1, 1) 부터시작
+		if (nSMaxR < nRow) nSMaxR = nRow;
+		if (nSMaxC < nCol) nSMaxC = nCol;
+
+		MstPnl.Strip[nRow].nMstStripIdx = FrameRgnID[j].nId;
+
+		//MstPnl.Strip[nRow].Area.dLeft = (double)FrameRgnPix[j].iStartX * mmPxl;
+		//MstPnl.Strip[nRow].Area.dTop = (double)FrameRgnPix[j].iStartY * mmPxl;
+		//MstPnl.Strip[nRow].Area.dRight = (double)FrameRgnPix[j].iEndX * mmPxl;
+		//MstPnl.Strip[nRow].Area.dBottom = (double)FrameRgnPix[j].iEndY * mmPxl;
+
+		MstPnl.Strip[nRow].nTotalPiece = nPieceNum[j];
+		nPMaxR = 0; nPMaxC = 0;
+		for (i = 0; i < nPieceNum[j]; i++)
+		{
+			nR = PieceRgnPix[i + nPieceCount].Row - 1; // Cammaster Row, Col : (1, 1) 부터시작
+			nC = PieceRgnPix[i + nPieceCount].Col - 1; // Cammaster Row, Col : (1, 1) 부터시작
+			if (nPMaxR < nR) nPMaxR = nR;
+			if (nPMaxC < nC) nPMaxC = nC;
+
+			nMstPcsIdx = PieceRgnPix[i + nPieceCount].nId;												// Cammaster ID : 0 부터시작
+			MstPnl.Strip[nRow].Piece[nR][nC].nMstPcsIdx = nMstPcsIdx;									// Cammaster ID : 0 부터시작
+			MstPnl.Strip[nRow].Piece[nR][nC].nMstStripIdx = FrameRgnID[j].nId;							// Cammaster ID : 0 부터시작
+			MstPnl.Strip[nRow].Piece[nR][nC].nMstStripRow = nRow;										// Cammaster ID : 0 부터시작
+			MstPnl.Strip[nRow].Piece[nR][nC].nMstStripCol = nCol;										// Cammaster ID : 0 부터시작
+			MstPnl.Strip[nRow].Piece[nR][nC].nMstPcsRow = nR;											// Cammaster ID : 0 부터시작
+			MstPnl.Strip[nRow].Piece[nR][nC].nMstPcsCol = nC;											// Cammaster ID : 0 부터시작
+			//MstPnl.Strip[nRow].Piece[nR][nC].Area.dLeft = PieceRgnPix[i + nPieceCount].iStartX * mmPxl;
+			//MstPnl.Strip[nRow].Piece[nR][nC].Area.dTop = PieceRgnPix[i + nPieceCount].iStartY * mmPxl;
+			//MstPnl.Strip[nRow].Piece[nR][nC].Area.dRight = PieceRgnPix[i + nPieceCount].iEndX * mmPxl;
+			//MstPnl.Strip[nRow].Piece[nR][nC].Area.dBottom = PieceRgnPix[i + nPieceCount].iEndY * mmPxl;
+
+			MstPnl.Piece[nMstPcsIdx].nMstPcsIdx = nMstPcsIdx;									// Cammaster ID : 0 부터시작
+			MstPnl.Piece[nMstPcsIdx].nMstStripIdx = FrameRgnID[j].nId;							// Cammaster ID : 0 부터시작
+			MstPnl.Piece[nMstPcsIdx].nMstStripRow = nRow;										// Cammaster ID : 0 부터시작
+			MstPnl.Piece[nMstPcsIdx].nMstStripCol = nCol;										// Cammaster ID : 0 부터시작
+			MstPnl.Piece[nMstPcsIdx].nMstPcsRow = nR;											// Cammaster ID : 0 부터시작
+			MstPnl.Piece[nMstPcsIdx].nMstPcsCol = nC;											// Cammaster ID : 0 부터시작
+			//MstPnl.Piece[nMstPcsIdx].Area.dLeft = PieceRgnPix[i + nPieceCount].iStartX * mmPxl;	// Cammaster ID : 0 부터시작
+			//MstPnl.Piece[nMstPcsIdx].Area.dTop = PieceRgnPix[i + nPieceCount].iStartY * mmPxl;	// Cammaster ID : 0 부터시작
+			//MstPnl.Piece[nMstPcsIdx].Area.dRight = PieceRgnPix[i + nPieceCount].iEndX * mmPxl;	// Cammaster ID : 0 부터시작
+			//MstPnl.Piece[nMstPcsIdx].Area.dBottom = PieceRgnPix[i + nPieceCount].iEndY * mmPxl;	// Cammaster ID : 0 부터시작
+		}
+		nPieceCount += nPieceNum[j];
+
+		MstPnl.Strip[nRow].nTotalPieceCol = nPMaxC + 1;
+		MstPnl.Strip[nRow].nTotalPieceRow = nPMaxR + 1;
+	}
+
+	MstPnl.nTotalStripCol = nSMaxC + 1;
+	MstPnl.nTotalStripRow = nSMaxR + 1;
+/*
+	CString sPath;
+	if (MasterInfo.strMasterLocation.Right(1) != "\\")
+		sPath.Format(_T("%s\\%s\\%s\\Piece.tif"), MasterInfo.strMasterLocation, m_sModel, m_sLayer);
+	else
+		sPath.Format(_T("%s%s\\%s\\Piece.tif"), MasterInfo.strMasterLocation, m_sModel, m_sLayer);
+	MstPnl.sPathPcsImg = sPath;
+
+	if (m_sPathCamSpecDir.Right(1) != "\\")
+		sPath.Format(_T("%s\\%s\\%s.TIF"), m_sPathCamSpecDir, m_sModel, m_sLayer);
+	else
+		sPath.Format(_T("%s%s\\%s.TIF"), m_sPathCamSpecDir, m_sModel, m_sLayer);
+	MstPnl.sPathPinImg = sPath;
+
+	for (i = 0; i < 4; i++)
+	{
+		if (m_sPathCamSpecDir.Right(1) != "\\")
+			sPath.Format(_T("%s\\%s\\%s-md%d.tif"), m_sPathCamSpecDir, m_sModel, m_sLayer, i);
+		else
+			sPath.Format(_T("%s%s\\%s-md%d.tif"), m_sPathCamSpecDir, m_sModel, m_sLayer, i);
+
+		MstPnl.sPathAlignImg[i] = sPath;
+	}
+
+	if (m_sPathCamSpecDir.Right(1) != "\\")
+		sPath.Format(_T("%s\\%s\\%s.pch"), m_sPathCamSpecDir, m_sModel, m_sLayer);
+	else
+		sPath.Format(_T("%s%s\\%s.pch"), m_sPathCamSpecDir, m_sModel, m_sLayer);
+	MstPnl.sPath2ptAlignAndMkPos = sPath;
+
+	if (m_sPathCamSpecDir.Right(1) != "\\")
+		sPath.Format(_T("%s\\%s\\%s.pch2"), m_sPathCamSpecDir, m_sModel, m_sLayer);
+	else
+		sPath.Format(_T("%s%s\\%s.pch2"), m_sPathCamSpecDir, m_sModel, m_sLayer);
+	MstPnl.sPath4ptAlignAndMkPos = sPath;
+
+	if (m_sPathCamSpecDir.Right(1) != "\\")
+		sPath.Format(_T("%s\\%s\\%s.ini"), m_sPathCamSpecDir, m_sModel, m_sLayer);
+	else
+		sPath.Format(_T("%s%s\\%s.ini"), m_sPathCamSpecDir, m_sModel, m_sLayer);
+	MstPnl.sPathPinPos = sPath; // [ORIGIN COORD] (원점): PX, PY ; (검사영역 좌상): MX, MY
+								// [PANEL INFO] (검사영역 W, H): InspectionWidth, InspectionHeight
+*/
+}
+
+BOOL CReadStrpcsDlg::GetMkMatrix(int nPcsId, int &nC, int &nR)	// nC:0~ , nR:0~
+{
+	BOOL bRtn = FALSE;
+	int nStrip, nPMaxR;
+
+	//if (!m_pPcsRgn)
+	//{
+	//	AfxMessageBox(_T("m_pPcsRgn is NULL on GetMkMatrix()"));
+	//	return bRtn;
+	//}
+
+	//if (pDoc->WorkingInfo.System.bStripPcsRgnBin)
+	{
+		nStrip = MstPnl.Piece[nPcsId].nMstStripRow;
+		nPMaxR = MstPnl.Strip[0].nTotalPieceRow;
+		nR = MstPnl.Piece[nPcsId].nMstPcsRow + nStrip * nPMaxR;
+		nC = MstPnl.Piece[nPcsId].nMstPcsCol;
+	}
+	//else
+	//	bRtn = m_pPcsRgn->GetMkMatrix(nPcsId, nC, nR);
+
+	return bRtn;
+}
+
+void CReadStrpcsDlg::InitOrederingMk()
+{
+	int nPcsIdx, nCol, nRow, nInc, nRrev;
+	int nArrangTable[MAX_PCE_ROW][MAX_PCE_COL] = { -1 };
+	//int nTotPcs = GetTotPcs();
+	int nTotPcs = PieceRgnNum;
+
+	int nNodeY, nNodeX;
+	GetShotRowCol(nNodeY, nNodeX);
+
+	//if (pDoc->WorkingInfo.System.bStripPcsRgnBin)
+	{
+		for (nPcsIdx = 0; nPcsIdx < nTotPcs; nPcsIdx++)						// 상면 총 피스 수
+		{
+			GetMkMatrix(nPcsIdx, nCol, nRow);
+			nArrangTable[nRow][nCol] = nPcsIdx;								// ArrangTable에 불량 피스의 인덱스를 펼쳐 놓음.
+		}
+
+		nInc = 0;															// 마킹순서 인덱스
+		for (nCol = 0; nCol < nNodeX; nCol++)
+		{
+			for (nRow = 0; nRow < nNodeY; nRow++)
+			{
+				if (nCol % 2)												// NodeY방향으로 인덱스가 증가하도록 정렬할 때 
+				{
+					nRrev = nNodeY - nRow - 1;
+					if (nArrangTable[nRrev][nCol] > -1)
+					{
+						m_MkOrder2PnlPcsIdx[nInc] = nArrangTable[nRrev][nCol];	// Y축 -방향(nRow 감소방향)으로 마킹순서의 피스 인덱스를 정렬 : 마킹순서인덱스(nInc)별 CamMaster의 피스인덱스(nArrangTable[nRow][nCol])
+						m_PnlPcsIdx2MkOrder[m_MkOrder2PnlPcsIdx[nInc]] = nInc;		// CamMaster의 피스인덱스(m_MkOrder2PnlPcsIdx[nInc])에 해당하는 마킹순서인덱스(nInc)
+						nInc++;
+					}
+				}
+				else														// NodeY방향으로 인덱스가 감소하도록 정렬할 때 
+				{
+					if (nArrangTable[nRow][nCol] > -1)
+					{
+						m_MkOrder2PnlPcsIdx[nInc] = nArrangTable[nRow][nCol];		// Y축 +방향(nRow 증가방향)으로 마킹순서의 피스 인덱스를 정렬 : 마킹순서인덱스(nInc)별 CamMaster의 피스인덱스(nArrangTable[nRow][nCol])
+						m_PnlPcsIdx2MkOrder[m_MkOrder2PnlPcsIdx[nInc]] = nInc;		// CamMaster의 피스인덱스(m_MkOrder2PnlPcsIdx[nInc])에 해당하는 마킹순서인덱스(nInc)
+						nInc++;
+					}
+				}
+			}
+		}
+	}
+	//else
+	//{
+	//	for (nPcsIdx = 0; nPcsIdx < nTotPcs; nPcsIdx++)						// 상면 총 피스 수
+	//	{
+	//		m_MkOrder2PnlPcsIdx[nPcsIdx] = nPcsIdx;
+	//		m_PnlPcsIdx2MkOrder[m_MkOrder2PnlPcsIdx[nPcsIdx]] = nPcsIdx;
+	//	}
+	//}
+}
+
+CString CReadStrpcsDlg::WriteOrederingMk()
+{
+	CFile file;
+	CFileException pError;
+	if (!file.Open(PATH_ORDERING_Mk, CFile::modeWrite, &pError))
+	{
+		if (!file.Open(PATH_ORDERING_Mk, CFile::modeCreate | CFile::modeWrite, &pError))
+		{
+			// 파일 오픈에 실패시 
+#ifdef _DEBUG
+			afxDump << _T("File could not be opened ") << pError.m_cause << _T("\n");
+#endif
+			return _T("");
+		}
+	}
+
+	CString sTemp = _T(""), sData = _T("");
+	//int nTotPcs = GetTotPcs();
+	int nTotPcs = PieceRgnNum;
+	int nMkIdx, nNodeY, nNodeX;
+	GetShotRowCol(nNodeY, nNodeX);
+
+	//for (nMkIdx = 0; nMkIdx < nTotPcs; nMkIdx++)						// 상면 총 피스 수
+	//{
+	//	int nCol = int(nMkIdx / nNodeY);
+	//	if(!(nCol % 2))
+	//		sTemp.Format(_T("%d\t"), m_MkOrder2PnlPcsIdx[nMkIdx]);
+	//	else
+	//	{
+	//		int nRevIdx = 2 * (nNodeY*nCol) + nNodeY - (nMkIdx+1);
+	//		sTemp.Format(_T("%d\t"), m_MkOrder2PnlPcsIdx[nRevIdx]);
+	//	}
+
+	//	sData += sTemp;
+	//	if (!((nMkIdx + 1) % (nNodeY/MAX_STRIP_NUM)) && nMkIdx)
+	//		sData += _T("\t");
+	//	if (!((nMkIdx+1)%nNodeY) && nMkIdx)
+	//		sData += _T("\r\n"); 
+	//}
+	for (nMkIdx = nTotPcs - 1; nMkIdx >= 0; nMkIdx--)					// 상면 총 피스 수
+	{
+		int nCol = int(nMkIdx / nNodeY);
+		if (nNodeY % 2)
+		{
+			if (!(nCol % 2))
+				sTemp.Format(_T("%d\t"), m_MkOrder2PnlPcsIdx[nMkIdx]);
+			else
+			{
+				int nRevIdx = 2 * (nNodeY*nCol) + nNodeY - (nMkIdx + 1);
+				sTemp.Format(_T("%d\t"), m_MkOrder2PnlPcsIdx[nRevIdx]);
+			}
+		}
+		else
+		{
+			if ((nCol % 2))
+				sTemp.Format(_T("%d\t"), m_MkOrder2PnlPcsIdx[nMkIdx]);
+			else
+			{
+				int nRevIdx = 2 * (nNodeY*nCol) + nNodeY - (nMkIdx + 1);
+				sTemp.Format(_T("%d\t"), m_MkOrder2PnlPcsIdx[nRevIdx]);
+			}
+		}
+
+		sData += sTemp;
+		if (!((nMkIdx) % (nNodeY / MAX_STRIP_NUM)) && nMkIdx)
+			sData += _T("\t");
+		if (!((nMkIdx) % nNodeY))
+			sData += _T("\r\n");
+	}
+
+	//버퍼의 내용을 file에 복사한다.
+	char* pRtn = NULL;
+	file.SeekToBegin();
+	file.Write(pRtn = StringToChar(sData), sData.GetLength());
+	file.Close();
+	delete pRtn;
+
+	return sData;
+}
+
+void CReadStrpcsDlg::StringToChar(CString str, char *szStr)
+{
+	int nLen = str.GetLength();
+	strcpy(szStr, CT2A(str));
+	szStr[nLen] = _T('\0');
+}
+
+
+char* CReadStrpcsDlg::StringToChar(CString str) // char* returned must be deleted... 
+{
+	char*		szStr = NULL;
+	wchar_t*	wszStr;
+	int				nLenth;
+
+	USES_CONVERSION;
+	//1. CString to wchar_t* conversion
+	wszStr = T2W(str.GetBuffer(str.GetLength()));
+
+	//2. wchar_t* to char* conversion
+	nLenth = WideCharToMultiByte(CP_ACP, 0, wszStr, -1, NULL, 0, NULL, NULL); //char* 형에 대한길이를 구함 
+	szStr = new char[nLenth];  //메모리 할당 
+
+							   //3. wchar_t* to char* conversion
+	WideCharToMultiByte(CP_ACP, 0, wszStr, -1, szStr, nLenth, 0, 0);
+	return szStr;
 }
